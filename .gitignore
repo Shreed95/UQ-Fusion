@@ -1,0 +1,110 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Conda/Virtual Environment
+uqfusion_env/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.conda/
+
+# Original Dataset (Large files)
+archive/
+
+# Generated/Processed Data
+data/slices/
+data/splits/
+data/processed/
+*.npz
+*.h5
+*.hdf5
+
+# Model Checkpoints and Outputs
+outputs/
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.pkl
+*.pickle
+
+# Logs
+logs/
+*.log
+*.out
+tensorboard_logs/
+wandb/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Large data files
+*.nii
+*.nii.gz
+*.dcm
+*.dicom
+
+# Archive files (if any)
+*.zip
+*.tar
+*.tar.gz
+*.rar
+
+# Metadata (if regeneratable)
+# Uncomment if you want to ignore metadata.json
+# data/metadata.json

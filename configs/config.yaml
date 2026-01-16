@@ -1,0 +1,74 @@
+# configs/config.yaml
+
+# Data Configuration
+data:
+  raw_dir: "/path/to/BraTS2020_TrainingData"
+  processed_dir: "./data/processed"
+  slices_dir: "./data/slices"
+  
+  # Volume dimensions
+  volume_shape: [240, 240, 155]
+  
+  # Preprocessing
+  preprocessing:
+    clip_percentile_low: 1.0
+    clip_percentile_high: 99.0
+    normalize_range: [0, 1]  # or [-1, 1]
+    
+  # Slice extraction
+  slice_extraction:
+    orientation: "axial"  # axial, sagittal, coronal
+    min_brain_fraction: 0.05  # Remove slices with < 5% brain
+    tumor_priority: true
+    slices_per_volume: 100  # Target number of slices
+    
+  # Dataset split
+  split:
+    train: 0.70
+    val: 0.15
+    test: 0.15
+    seed: 42
+
+# Augmentation Configuration
+augmentation:
+  enabled: true
+  
+  # Geometric augmentations
+  geometric:
+    rotation_range: 15  # degrees
+    horizontal_flip: true
+    vertical_flip: false
+    elastic_deformation:
+      enabled: true
+      alpha: 100
+      sigma: 10
+    random_crop:
+      enabled: true
+      scale_range: [0.85, 1.0]
+      
+  # Intensity augmentations
+  intensity:
+    brightness_range: 0.1
+    contrast_range: 0.1
+    gaussian_noise:
+      enabled: true
+      std_range: [0.01, 0.03]
+    gamma_range: [0.8, 1.2]
+    bias_field:
+      enabled: true
+      coefficients: 0.5
+
+# DataLoader Configuration
+dataloader:
+  batch_size: 8
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+  shuffle_train: true
+
+# Model Configuration (for reference)
+model:
+  image_size: 240
+  latent_size: 60
+  in_channels: 4
+  latent_channels: 4
