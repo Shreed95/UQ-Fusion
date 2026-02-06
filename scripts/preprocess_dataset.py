@@ -60,6 +60,14 @@ def parse_args():
     parser.add_argument('--train_ratio', type=float, default=0.7)
     parser.add_argument('--val_ratio', type=float, default=0.15)
     parser.add_argument('--seed', type=int, default=42)
+
+    # Limit training split size (slices)
+    parser.add_argument(
+        '--max_train_slices',
+        type=int,
+        default=5000,
+        help='Cap number of slices in training split. Set <= 0 to disable.'
+    )
     
     return parser.parse_args()
 
@@ -152,7 +160,8 @@ def main():
     data_module.setup(
         train_ratio=args.train_ratio,
         val_ratio=args.val_ratio,
-        seed=args.seed
+        seed=args.seed,
+        max_train_slices=args.max_train_slices if args.max_train_slices and args.max_train_slices > 0 else None
     )
     
     print("\n" + "=" * 60)

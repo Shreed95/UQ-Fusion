@@ -340,7 +340,8 @@ class BraTSDataModule:
         self,
         train_ratio: float = 0.7,
         val_ratio: float = 0.15,
-        seed: int = 42
+        seed: int = 42,
+        max_train_slices: Optional[int] = None
     ):
         """
         Setup train/val/test splits.
@@ -349,6 +350,7 @@ class BraTSDataModule:
             train_ratio: Fraction of data for training
             val_ratio: Fraction of data for validation
             seed: Random seed for reproducibility
+            max_train_slices: Optional cap for number of training slices
         """
         slices_dir = Path(self.config.slices_dir or "./data/slices")
         metadata_file = slices_dir.parent / "metadata.json"
@@ -375,6 +377,22 @@ class BraTSDataModule:
         train_metadata = [m for m in metadata if m['patient_id'] in train_patients]
         val_metadata = [m for m in metadata if m['patient_id'] in val_patients]
         test_metadata = [m for m in metadata if m['patient_id'] in test_patients]
+
+        # Optionally cap training slices (deterministic, tumor-aware)
+        if max_train_slices is not None and len(train_metadata) > max_train_slices:
+            rng = random.Random(seed)
+            tumor = [m for m in train_metadata if m.get("has_tumor", False)]
+            non_tumor = [m for m in train_metadata if not m.get("has_tumor", False)]
+
+            rng.shuffle(tumor)
+            rng.shuffle(non_tumor)
+
+            kept = tumor[:max_train_slices]
+            remaining = max_train_slices - len(kept)
+            if remaining > 0:
+                kept += non_tumor[:remaining]
+
+            train_metadata = kept
         
         # Save split metadata
         splits_dir = slices_dir.parent / "splits"
