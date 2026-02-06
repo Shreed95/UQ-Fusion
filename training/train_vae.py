@@ -36,6 +36,10 @@ class TrainingConfig:
     # Loss weights
     recon_weight: float = 1.0
     kl_weight: float = 0.0001
+    # Combined reconstruction (L1 + SSIM)
+    # Set ssim_weight=0.0 to disable SSIM component.
+    ssim_weight: float = 0.0
+    l1_weight: float = 1.0
     kl_warmup_epochs: int = 10
     
     # Optimizer
@@ -138,7 +142,9 @@ class VAETrainer:
         # Loss function
         self.loss_fn = CombinedVAELoss(
             recon_weight=config.recon_weight,
-            kl_weight=config.kl_weight
+            kl_weight=config.kl_weight,
+            ssim_weight=config.ssim_weight,
+            l1_weight=config.l1_weight
         )
         
         # Optimizer

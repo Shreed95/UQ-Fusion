@@ -287,7 +287,7 @@ class SSIMLoss(nn.Module):
         if channel != self.channel:
             window = self._create_window(self.window_size, channel, self.sigma).to(pred.device)
         else:
-            window = self.window
+            window = self.window.to(pred.device)
         
         # Compute means
         mu1 = F.conv2d(pred, window, padding=self.window_size // 2, groups=channel)
