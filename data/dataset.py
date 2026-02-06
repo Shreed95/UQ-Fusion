@@ -341,7 +341,8 @@ class BraTSDataModule:
         train_ratio: float = 0.7,
         val_ratio: float = 0.15,
         seed: int = 42,
-        max_train_slices: Optional[int] = None
+        max_train_slices: Optional[int] = None,
+        scale_val_test_with_train: bool = False
     ):
         """
         Setup train/val/test splits.
@@ -351,6 +352,7 @@ class BraTSDataModule:
             val_ratio: Fraction of data for validation
             seed: Random seed for reproducibility
             max_train_slices: Optional cap for number of training slices
+            scale_val_test_with_train: If True, cap val/test slices proportionally to train cap
         """
         slices_dir = Path(self.config.slices_dir or "./data/slices")
         metadata_file = slices_dir.parent / "metadata.json"
@@ -378,21 +380,39 @@ class BraTSDataModule:
         val_metadata = [m for m in metadata if m['patient_id'] in val_patients]
         test_metadata = [m for m in metadata if m['patient_id'] in test_patients]
 
-        # Optionally cap training slices (deterministic, tumor-aware)
-        if max_train_slices is not None and len(train_metadata) > max_train_slices:
+        # Helper to deterministically cap a split, prioritizing tumor slices
+        def _cap_split(split_meta, max_slices: Optional[int]):
+            if max_slices is None or max_slices <= 0 or len(split_meta) <= max_slices:
+                return split_meta
+
             rng = random.Random(seed)
-            tumor = [m for m in train_metadata if m.get("has_tumor", False)]
-            non_tumor = [m for m in train_metadata if not m.get("has_tumor", False)]
+            tumor = [m for m in split_meta if m.get("has_tumor", False)]
+            non_tumor = [m for m in split_meta if not m.get("has_tumor", False)]
 
             rng.shuffle(tumor)
             rng.shuffle(non_tumor)
 
-            kept = tumor[:max_train_slices]
-            remaining = max_train_slices - len(kept)
+            kept = tumor[:max_slices]
+            remaining = max_slices - len(kept)
             if remaining > 0:
                 kept += non_tumor[:remaining]
 
-            train_metadata = kept
+            return kept
+
+        # Optionally cap training slices
+        train_metadata = _cap_split(train_metadata, max_train_slices)
+
+        # Optionally cap val/test slices proportionally to training cap
+        if scale_val_test_with_train and max_train_slices is not None:
+            train_r = train_ratio
+            val_r = val_ratio
+            test_r = max(0.0, 1.0 - train_ratio - val_ratio)
+
+            max_val_slices = int(round(max_train_slices * val_r / train_r)) if train_r > 0 and val_r > 0 else None
+            max_test_slices = int(round(max_train_slices * test_r / train_r)) if train_r > 0 and test_r > 0 else None
+
+            val_metadata = _cap_split(val_metadata, max_val_slices)
+            test_metadata = _cap_split(test_metadata, max_test_slices)
         
         # Save split metadata
         splits_dir = slices_dir.parent / "splits"

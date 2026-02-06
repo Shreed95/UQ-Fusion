@@ -68,6 +68,13 @@ def parse_args():
         default=5000,
         help='Cap number of slices in training split. Set <= 0 to disable.'
     )
+
+    # Scale val/test slice caps proportionally to train cap
+    parser.add_argument(
+        '--scale_val_test_with_train',
+        action='store_true',
+        help='If set, cap val/test slices proportionally to max_train_slices using train/val/test ratios.'
+    )
     
     return parser.parse_args()
 
@@ -161,7 +168,8 @@ def main():
         train_ratio=args.train_ratio,
         val_ratio=args.val_ratio,
         seed=args.seed,
-        max_train_slices=args.max_train_slices if args.max_train_slices and args.max_train_slices > 0 else None
+        max_train_slices=args.max_train_slices if args.max_train_slices and args.max_train_slices > 0 else None,
+        scale_val_test_with_train=args.scale_val_test_with_train
     )
     
     print("\n" + "=" * 60)
