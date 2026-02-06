@@ -58,6 +58,8 @@ def parse_args():
                         help='Reconstruction loss weight')
     parser.add_argument('--kl_weight', type=float, default=0.0001,
                         help='KL divergence weight')
+    parser.add_argument('--ssim_weight', type=float, default=0.0,
+                        help='SSIM loss weight (set to 0.0 to disable SSIM, reduces memory)')
     parser.add_argument('--kl_warmup', type=int, default=10,
                         help='KL warmup epochs')
     
@@ -81,8 +83,14 @@ def parse_args():
                         help='Path to checkpoint to resume from')
     
     # Other
-    parser.add_argument('--device', type=str, default='cuda',
-                        help='Device to use')
+    if torch.backends.mps.is_available():
+        default_device = 'mps'
+    elif torch.cuda.is_available():
+        default_device = 'cuda'
+    else:
+        default_device = 'cpu'
+    parser.add_argument('--device', type=str, default=default_device,
+                        help='Device to use (cuda, mps, or cpu)')
     parser.add_argument('--mixed_precision', action='store_true', default=True,
                         help='Use mixed precision training')
     parser.add_argument('--no_ema', action='store_true',
@@ -148,12 +156,13 @@ def main():
     print(f"Validation samples: {len(val_dataset)}")
     
     # Create dataloaders
+    pin_memory = (args.device == 'cuda' and torch.cuda.is_available())
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
         drop_last=True
     )
     
@@ -162,7 +171,7 @@ def main():
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
-        pin_memory=True
+        pin_memory=pin_memory
     )
     
     # Create model
@@ -198,6 +207,7 @@ def main():
         grad_clip=args.grad_clip,
         recon_weight=args.recon_weight,
         kl_weight=args.kl_weight,
+        ssim_weight=args.ssim_weight,
         kl_warmup_epochs=args.kl_warmup,
         scheduler=args.scheduler,
         warmup_epochs=args.warmup_epochs,

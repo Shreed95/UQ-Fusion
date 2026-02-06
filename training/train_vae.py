@@ -127,7 +127,12 @@ class VAETrainer:
         self.config = config
         
         # Device
-        self.device = torch.device(config.device if torch.cuda.is_available() else 'cpu')
+        if config.device == 'mps' and torch.backends.mps.is_available():
+            self.device = torch.device('mps')
+        elif config.device == 'cuda' and torch.cuda.is_available():
+            self.device = torch.device('cuda')
+        else:
+            self.device = torch.device('cpu')
         self.model = self.model.to(self.device)
         
         # Loss function
@@ -143,7 +148,10 @@ class VAETrainer:
         self.scheduler = self._create_scheduler()
         
         # Mixed precision
-        self.scaler = torch.cuda.amp.GradScaler() if config.mixed_precision else None
+        if config.mixed_precision and config.device == 'cuda' and torch.cuda.is_available():
+            self.scaler = torch.amp.GradScaler('cuda')
+        else:
+            self.scaler = None
         
         # EMA
         self.ema = EMA(self.model, config.ema_decay) if config.use_ema else None
@@ -244,8 +252,8 @@ class VAETrainer:
             images = batch['image'].to(self.device)
             
             # Forward pass
-            if self.config.mixed_precision:
-                with torch.cuda.amp.autocast():
+            if self.scaler is not None:
+                with torch.amp.autocast('cuda'):
                     recon, mean, log_var = self.model(images)
                     loss, loss_dict = self.loss_fn(recon, images, mean, log_var)
             else:
@@ -255,7 +263,7 @@ class VAETrainer:
             # Backward pass
             self.optimizer.zero_grad()
             
-            if self.config.mixed_precision:
+            if self.scaler is not None:
                 self.scaler.scale(loss).backward()
                 self.scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
