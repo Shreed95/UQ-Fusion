@@ -12,6 +12,25 @@ from .vae import (
     create_vae
 )
 
+from .diffusion import (
+    DiffusionUNet,
+    DiffusionUNetSmall,
+    UNetConfig,
+    create_unet,
+    NoiseScheduler,
+    DDPMScheduler,
+    DDIMScheduler,
+    SchedulerConfig,
+    DDPMSampler,
+    DDIMSampler,
+    GuidedSampler,
+    ImageToImageSampler,
+    LatentDiffusionModel,
+    LatentDiffusionModelSmall,
+    LatentDiffusionConfig,
+    create_latent_diffusion
+)
+
 __all__ = [
     # VAE
     'VAE',
@@ -22,5 +41,29 @@ __all__ = [
     'VAEDecoder',
     'VAELoss',
     'CombinedVAELoss',
-    'create_vae'
+    'create_vae',
+    
+    # Diffusion U-Net
+    'DiffusionUNet',
+    'DiffusionUNetSmall',
+    'UNetConfig',
+    'create_unet',
+    
+    # Schedulers
+    'NoiseScheduler',
+    'DDPMScheduler',
+    'DDIMScheduler',
+    'SchedulerConfig',
+    
+    # Samplers
+    'DDPMSampler',
+    'DDIMSampler',
+    'GuidedSampler',
+    'ImageToImageSampler',
+    
+    # Latent Diffusion Model
+    'LatentDiffusionModel',
+    'LatentDiffusionModelSmall',
+    'LatentDiffusionConfig',
+    'create_latent_diffusion'
 ]
