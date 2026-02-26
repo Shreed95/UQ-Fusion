@@ -300,11 +300,15 @@ class DiffusionUNetSmall(nn.Module):
         
         # Decoder
         x = self.up1(x)
+        if x.shape[-2:] != skip2.shape[-2:]:
+            x = F.interpolate(x, size=skip2.shape[-2:], mode='bilinear', align_corners=False)
         x = torch.cat([x, skip2], dim=1)
         x = self.dec1(x, t)
         x = self.dec2(x, t)
-        
+
         x = self.up2(x)
+        if x.shape[-2:] != skip1.shape[-2:]:
+            x = F.interpolate(x, size=skip1.shape[-2:], mode='bilinear', align_corners=False)
         x = torch.cat([x, skip1], dim=1)
         x = self.dec3(x, t)
         x = self.dec4(x, t)

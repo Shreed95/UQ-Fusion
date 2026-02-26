@@ -1,74 +1,279 @@
 # configs/config.yaml
+# UQ-Fusion: Complete Configuration File
 
-# Data Configuration
-data:
-  raw_dir: "/path/to/BraTS2020_TrainingData"
-  processed_dir: "./data/processed"
+# =============================================================================
+# PATHS
+# =============================================================================
+paths:
+  data_dir: "./data"
+  raw_data_dir: "./data/raw"
   slices_dir: "./data/slices"
-  
-  # Volume dimensions
-  volume_shape: [240, 240, 155]
-  
-  # Preprocessing
-  preprocessing:
-    clip_percentile_low: 1.0
-    clip_percentile_high: 99.0
-    normalize_range: [0, 1]  # or [-1, 1]
-    
-  # Slice extraction
-  slice_extraction:
-    orientation: "axial"  # axial, sagittal, coronal
-    min_brain_fraction: 0.05  # Remove slices with < 5% brain
-    tumor_priority: true
-    slices_per_volume: 100  # Target number of slices
-    
-  # Dataset split
-  split:
-    train: 0.70
-    val: 0.15
-    test: 0.15
-    seed: 42
+  splits_dir: "./data/splits"
+  checkpoint_dir: "./outputs/checkpoints"
+  log_dir: "./outputs/logs"
+  output_dir: "./outputs"
+  expanded_dataset_dir: "./outputs/expanded_dataset"
+  evaluation_dir: "./outputs/evaluation"
+  reports_dir: "./outputs/reports"
 
-# Augmentation Configuration
+# =============================================================================
+# DATA PREPROCESSING
+# =============================================================================
+preprocessing:
+  # NIfTI loading
+  modalities: ["t1", "t1ce", "t2", "flair"]
+  
+  # Normalization
+  normalize_method: "zscore"  # zscore, minmax, percentile
+  clip_percentile: [1, 99]
+  target_range: [0, 1]
+  
+  # Slice extraction
+  slice_axis: "axial"  # axial, sagittal, coronal
+  min_brain_fraction: 0.05  # Skip slices with <5% brain
+  tumor_aware_sampling: true
+  
+  # Data splits
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+  random_seed: 42
+
+# =============================================================================
+# AUGMENTATION
+# =============================================================================
 augmentation:
   enabled: true
   
-  # Geometric augmentations
-  geometric:
-    rotation_range: 15  # degrees
-    horizontal_flip: true
-    vertical_flip: false
-    elastic_deformation:
-      enabled: true
-      alpha: 100
-      sigma: 10
-    random_crop:
-      enabled: true
-      scale_range: [0.85, 1.0]
-      
-  # Intensity augmentations
-  intensity:
-    brightness_range: 0.1
-    contrast_range: 0.1
-    gaussian_noise:
-      enabled: true
-      std_range: [0.01, 0.03]
-    gamma_range: [0.8, 1.2]
-    bias_field:
-      enabled: true
-      coefficients: 0.5
+  # Geometric
+  rotation_range: 15  # degrees
+  flip_horizontal: true
+  flip_vertical: false
+  elastic_deformation: false
+  
+  # Intensity
+  brightness_range: 0.1
+  contrast_range: 0.1
+  gamma_range: [0.8, 1.2]
+  noise_std: 0.02
 
-# DataLoader Configuration
-dataloader:
+# =============================================================================
+# VAE (Phase 3)
+# =============================================================================
+vae:
+  # Architecture
+  in_channels: 4
+  out_channels: 4
+  latent_channels: 4
+  base_channels: 32
+  
+  # Training
+  epochs: 100
   batch_size: 8
+  lr: 0.0001
+  weight_decay: 0.000001
+  
+  # Loss weights
+  reconstruction_weight: 1.0
+  kl_weight: 0.0001
+  perceptual_weight: 0.1
+  
+  # Checkpointing
+  save_every: 10
+  
+  # Validation targets
+  target_psnr: 30.0
+  target_ssim: 0.95
+
+# =============================================================================
+# DIFFUSION (Phase 4)
+# =============================================================================
+diffusion:
+  # Architecture
+  latent_channels: 4
+  base_channels: 64
+  channel_multipliers: [1, 2, 4, 8]
+  num_res_blocks: 2
+  attention_resolutions: [8, 16]
+  
+  # Noise schedule
+  num_timesteps: 1000
+  beta_schedule: "linear"  # linear, cosine
+  beta_start: 0.0001
+  beta_end: 0.02
+  
+  # Training
+  epochs: 100
+  batch_size: 4
+  lr: 0.0001
+  weight_decay: 0.000001
+  gradient_clip: 1.0
+  ema_decay: 0.9999
+  
+  # Sampling
+  sampling_method: "ddim"  # ddpm, ddim
+  ddim_steps: 50
+  
+  # Checkpointing
+  save_every: 10
+
+# =============================================================================
+# GAN (Phase 5)
+# =============================================================================
+gan:
+  # Generator
+  generator:
+    in_channels: 4
+    out_channels: 4
+    base_channels: 32
+    num_residual_blocks: 6
+  
+  # Discriminator
+  discriminator:
+    in_channels: 4
+    base_channels: 32
+    num_layers: 4
+  
+  # Training
+  epochs: 100
+  batch_size: 4
+  lr_g: 0.0002
+  lr_d: 0.0002
+  beta1: 0.5
+  beta2: 0.999
+  
+  # Loss weights
+  adversarial_weight: 1.0
+  l1_weight: 10.0
+  ssim_weight: 5.0
+  gradient_weight: 2.0
+  identity_weight: 0.5
+  
+  # Checkpointing
+  save_every: 10
+
+# =============================================================================
+# UNCERTAINTY (Phase 6)
+# =============================================================================
+uncertainty:
+  # Aleatoric
+  aleatoric:
+    enabled: true
+    variance_activation: "softplus"
+    min_variance: 0.0001
+    max_variance: 10.0
+  
+  # Epistemic (MC Dropout)
+  epistemic:
+    enabled: true
+    method: "mc_dropout"  # mc_dropout, deep_ensemble
+    num_mc_samples: 10
+    dropout_rate: 0.1
+  
+  # Combined
+  combination:
+    method: "weighted_sum"  # weighted_sum, max, learned
+    aleatoric_weight: 0.5
+    epistemic_weight: 0.5
+    normalize: true
+
+# =============================================================================
+# FUSION (Phase 7)
+# =============================================================================
+fusion:
+  method: "uncertainty"  # uncertainty, average, softmax, gated, learnable
+  
+  # Uncertainty-guided fusion
+  epsilon: 0.000001
+  temperature: 1.0
+  smooth_weights: true
+  smooth_sigma: 1.0
+  
+  # Learnable fusion (if method=learnable)
+  learnable:
+    hidden_channels: 64
+    num_layers: 3
+    epochs: 50
+    lr: 0.0001
+
+# =============================================================================
+# VALIDATION (Phase 8)
+# =============================================================================
+validation:
+  # Thresholds
+  thresholds:
+    psnr_min: 25.0
+    ssim_min: 0.80
+    lpips_max: 0.30
+    fid_max: 50.0
+    mae_max: 0.10
+    uncertainty_max: 0.50
+  
+  # Quality score weights
+  weights:
+    psnr: 0.20
+    ssim: 0.25
+    lpips: 0.15
+    mae: 0.15
+    nrmse: 0.05
+    uncertainty: 0.20
+  
+  # Acceptance
+  acceptance_threshold: 0.70
+  
+  # Logging
+  log_all_decisions: true
+
+# =============================================================================
+# DATASET EXPANSION
+# =============================================================================
+expansion:
+  expansion_factor: 2  # Target 2x expansion
+  max_attempts_per_sample: 3
+  diffusion_steps: 50
+  diffusion_strength: 0.8
+  save_rejected: false
+
+# =============================================================================
+# SEGMENTATION (Phase 9)
+# =============================================================================
+segmentation:
+  # Architecture
+  model_type: "small"  # small, standard, large
+  in_channels: 4
+  num_classes: 4
+  base_channels: 16
+  
+  # Training
+  epochs: 50
+  batch_size: 8
+  lr: 0.001
+  weight_decay: 0.00001
+  lr_scheduler: "cosine"
+  
+  # Loss
+  dice_weight: 1.0
+  ce_weight: 0.5
+  
+  # Evaluation targets
+  target_dice_wt: 0.90
+  target_dice_tc: 0.85
+  target_dice_et: 0.80
+
+# =============================================================================
+# DEVICE & HARDWARE
+# =============================================================================
+hardware:
+  device: "auto"  # auto, cuda, mps, cpu
   num_workers: 4
   pin_memory: true
-  prefetch_factor: 2
-  shuffle_train: true
+  mixed_precision: false
 
-# Model Configuration (for reference)
-model:
-  image_size: 240
-  latent_size: 60
-  in_channels: 4
-  latent_channels: 4
+# =============================================================================
+# LOGGING
+# =============================================================================
+logging:
+  level: "INFO"
+  tensorboard: true
+  save_visualizations: true
+  visualization_freq: 100

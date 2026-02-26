@@ -86,9 +86,8 @@ class EMA:
     def update(self):
         for name, param in self.model.named_parameters():
             if param.requires_grad:
-                self.shadow[name] = (
-                    self.decay * self.shadow[name] + (1 - self.decay) * param.data
-                )
+                self.shadow[name].mul_(self.decay).add_(param.data, alpha=1 - self.decay)
+
     
     def apply(self):
         for name, param in self.model.named_parameters():
@@ -122,11 +121,17 @@ class DiffusionTrainer:
         self.val_loader = val_loader
         self.config = config
         
-        # Device
-        self.device = torch.device(config.device if torch.cuda.is_available() else 'cpu')
+        # Device selection (CUDA / MPS / CPU)
+        if config.device == "cuda" and torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif config.device == "mps" and torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
+        print(f"Using device: {self.device}")
         self.model = self.model.to(self.device)
         self.vae = self.vae.to(self.device)
-        
+
         # Freeze VAE
         self.vae.eval()
         for param in self.vae.parameters():
@@ -142,8 +147,11 @@ class DiffusionTrainer:
         self.scheduler = self._create_scheduler()
         
         # Mixed precision
-        self.scaler = torch.cuda.amp.GradScaler() if config.mixed_precision else None
-        
+        if config.mixed_precision and self.device.type == "cuda":
+            self.scaler = torch.amp.GradScaler("cuda")
+        else:
+            self.scaler = None
+
         # EMA
         self.ema = EMA(self.model.unet, config.ema_decay) if config.use_ema else None
         
@@ -236,7 +244,12 @@ class DiffusionTrainer:
                 latents = self._encode_batch(images)
             
             # Forward pass
-            if self.config.mixed_precision:
+            use_cuda_amp = (
+                self.config.mixed_precision
+                and self.device.type == "cuda"
+            )
+
+            if use_cuda_amp:
                 with torch.cuda.amp.autocast():
                     loss_dict = self.model.get_loss(latents, condition=latents)
                     loss = loss_dict['loss']
@@ -247,7 +260,7 @@ class DiffusionTrainer:
             # Backward pass
             self.optimizer.zero_grad()
             
-            if self.config.mixed_precision:
+            if use_cuda_amp:
                 self.scaler.scale(loss).backward()
                 self.scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.unet.parameters(), self.config.grad_clip)
@@ -272,6 +285,9 @@ class DiffusionTrainer:
             # Logging
             self.writer.add_scalar('train/loss_step', loss.item(), self.global_step)
             self.global_step += 1
+
+            if self.device.type == "mps":
+                torch.mps.empty_cache()
         
         metrics = {
             'loss': total_loss / num_batches
@@ -329,10 +345,11 @@ class DiffusionTrainer:
         source_latents = self._encode_batch(source_images)
         
         # Generate using image-to-image
+        latent_h, latent_w = source_latents.shape[-2:]
         generated_latents = self.model.sample(
             batch_size=num_samples,
             condition=source_latents,
-            latent_shape=(60, 60),
+            latent_shape=(latent_h, latent_w),
             num_inference_steps=50,
             show_progress=False
         )
@@ -464,7 +481,7 @@ class DiffusionTrainer:
 
 def load_vae(checkpoint_path: str, model_type: str = 'small', device: str = 'cuda') -> nn.Module:
     """Load pre-trained VAE."""
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
     
     if model_type == 'small':
         vae = VAESmall(in_channels=4, out_channels=4, latent_channels=4)

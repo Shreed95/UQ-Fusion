@@ -1,41 +1,53 @@
 # requirements.txt
+# UQ-Fusion: Uncertainty-Guided Fusion for Medical Image Dataset Expansion
 
-# Core
+# Core Deep Learning
 torch>=2.0.0
 torchvision>=0.15.0
-numpy>=1.24.0
+torchaudio>=2.0.0
 
-# Medical imaging
+# Medical Imaging
 nibabel>=5.0.0
 SimpleITK>=2.2.0
+monai>=1.2.0
 
-# Data processing
-scipy>=1.10.0
-scikit-image>=0.20.0
-h5py>=3.8.0
+# Diffusion Models
+diffusers>=0.20.0
+accelerate>=0.20.0
+transformers>=4.30.0
 
-# Configuration
-PyYAML>=6.0
-python-dotenv>=1.0.0
-
-# Visualization
-matplotlib>=3.7.0
-seaborn>=0.12.0
-
-# Progress and logging
-tqdm>=4.65.0
-tensorboard>=2.12.0
+# Image Processing
+scikit-image>=0.21.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
 
 # Metrics
 pytorch-fid>=0.3.0
 lpips>=0.1.4
+scipy>=1.10.0
+
+# Data Processing
+numpy>=1.24.0
+pandas>=2.0.0
+h5py>=3.8.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+tensorboard>=2.13.0
+
+# Configuration
+PyYAML>=6.0
+omegaconf>=2.3.0
 
 # Utilities
-Pillow>=9.5.0
-pandas>=2.0.0
-
-# Deep learning extras
+tqdm>=4.65.0
 einops>=0.6.0
-accelerate>=0.18.0
-diffusers>=0.16.0
-transformers>=4.28.0
+colorama>=0.4.6
+
+# Optional: For MPS (Apple Silicon)
+# Install PyTorch with MPS support:
+# pip install torch torchvision torchaudio
+
+# Optional: For CUDA
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118

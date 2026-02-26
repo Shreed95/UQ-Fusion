@@ -82,7 +82,7 @@ def parse_args():
                         help='Path to checkpoint to resume from')
     
     # Other
-    parser.add_argument('--device', type=str, default='cuda',
+    parser.add_argument('--device', type=str, default='mps',
                         help='Device to use')
     parser.add_argument('--mixed_precision', action='store_true', default=True,
                         help='Use mixed precision training')

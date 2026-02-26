@@ -1,14 +1,36 @@
 # validation/metrics.py
 
+"""
+Image Quality Metrics for Medical Image Synthesis.
+
+Includes:
+- PSNR (Peak Signal-to-Noise Ratio)
+- SSIM (Structural Similarity Index Measure)
+- FID (Fréchet Inception Distance)
+- LPIPS (Learned Perceptual Image Patch Similarity)
+- Medical-specific metrics
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Tuple, Dict, Optional
+from typing import Dict, Optional, Tuple, List, Union
+from dataclasses import dataclass
 from scipy import linalg
 
 
-class PSNR:
+@dataclass
+class MetricsConfig:
+    """Configuration for metrics computation."""
+    device: str = 'cuda'
+    ssim_window_size: int = 11
+    ssim_sigma: float = 1.5
+    lpips_net: str = 'vgg'  # 'vgg' or 'alex'
+    fid_batch_size: int = 32
+
+
+class PSNRMetric:
     """Peak Signal-to-Noise Ratio metric."""
     
     def __init__(self, max_val: float = 1.0):
@@ -23,40 +45,65 @@ class PSNR:
         Compute PSNR.
         
         Args:
-            pred: Predicted images (B, C, H, W)
-            target: Target images (B, C, H, W)
+            pred: Predicted image (B, C, H, W)
+            target: Target image (B, C, H, W)
             
         Returns:
             PSNR value in dB
         """
-        mse = F.mse_loss(pred, target, reduction='mean')
-        psnr = 20 * torch.log10(self.max_val / torch.sqrt(mse + 1e-8))
+        mse = F.mse_loss(pred, target, reduction='none')
+        mse = mse.view(mse.shape[0], -1).mean(dim=1)
+        psnr = 10 * torch.log10(self.max_val ** 2 / (mse + 1e-8))
         return psnr
+    
+    def compute_batch(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor
+    ) -> Dict[str, float]:
+        """Compute batch statistics."""
+        psnr = self(pred, target)
+        return {
+            'psnr_mean': psnr.mean().item(),
+            'psnr_std': psnr.std().item(),
+            'psnr_min': psnr.min().item(),
+            'psnr_max': psnr.max().item()
+        }
 
 
-class SSIM:
-    """Structural Similarity Index metric."""
+class SSIMMetric:
+    """Structural Similarity Index Measure."""
     
     def __init__(
         self,
         window_size: int = 11,
         sigma: float = 1.5,
-        channel: int = 4
+        channel: int = 4,
+        size_average: bool = False
     ):
         self.window_size = window_size
         self.sigma = sigma
         self.channel = channel
-        self.window = self._create_window(window_size, channel, sigma)
+        self.size_average = size_average
+        
+        # Create Gaussian window
+        self.window = self._create_window(window_size, sigma, channel)
     
-    def _gaussian(self, window_size: int, sigma: float) -> torch.Tensor:
-        x = torch.arange(window_size).float() - window_size // 2
-        gauss = torch.exp(-x.pow(2) / (2 * sigma ** 2))
-        return gauss / gauss.sum()
-    
-    def _create_window(self, window_size: int, channel: int, sigma: float) -> torch.Tensor:
-        _1D_window = self._gaussian(window_size, sigma).unsqueeze(1)
-        _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
-        window = _2D_window.expand(channel, 1, window_size, window_size).contiguous()
+    def _create_window(
+        self,
+        window_size: int,
+        sigma: float,
+        channel: int
+    ) -> torch.Tensor:
+        """Create Gaussian window."""
+        coords = torch.arange(window_size).float() - window_size // 2
+        gauss = torch.exp(-coords ** 2 / (2 * sigma ** 2))
+        gauss = gauss / gauss.sum()
+        
+        window_1d = gauss.unsqueeze(1)
+        window_2d = window_1d @ window_1d.t()
+        window = window_2d.expand(channel, 1, window_size, window_size).contiguous()
+        
         return window
     
     def __call__(
@@ -68,26 +115,25 @@ class SSIM:
         Compute SSIM.
         
         Args:
-            pred: Predicted images (B, C, H, W)
-            target: Target images (B, C, H, W)
+            pred: Predicted image (B, C, H, W)
+            target: Target image (B, C, H, W)
             
         Returns:
-            SSIM value (0 to 1, higher is better)
+            SSIM value (B,) or scalar
         """
         channel = pred.shape[1]
         
         if channel != self.channel:
-            window = self._create_window(self.window_size, channel, self.sigma)
-        else:
-            window = self.window
+            self.window = self._create_window(self.window_size, self.sigma, channel)
+            self.channel = channel
         
-        window = window.to(pred.device)
+        window = self.window.to(pred.device)
         
         mu1 = F.conv2d(pred, window, padding=self.window_size // 2, groups=channel)
         mu2 = F.conv2d(target, window, padding=self.window_size // 2, groups=channel)
         
-        mu1_sq = mu1.pow(2)
-        mu2_sq = mu2.pow(2)
+        mu1_sq = mu1 ** 2
+        mu2_sq = mu2 ** 2
         mu1_mu2 = mu1 * mu2
         
         sigma1_sq = F.conv2d(pred * pred, window, padding=self.window_size // 2, groups=channel) - mu1_sq
@@ -100,205 +146,368 @@ class SSIM:
         ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / \
                    ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
         
-        return ssim_map.mean()
-
-
-class FID:
-    """
-    Fréchet Inception Distance metric.
-    Measures distance between feature distributions of real and generated images.
-    """
+        if self.size_average:
+            return ssim_map.mean()
+        else:
+            return ssim_map.view(ssim_map.shape[0], -1).mean(dim=1)
     
-    def __init__(self, feature_extractor: Optional[nn.Module] = None):
+    def compute_batch(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor
+    ) -> Dict[str, float]:
+        """Compute batch statistics."""
+        ssim = self(pred, target)
+        return {
+            'ssim_mean': ssim.mean().item(),
+            'ssim_std': ssim.std().item(),
+            'ssim_min': ssim.min().item(),
+            'ssim_max': ssim.max().item()
+        }
+
+
+class LPIPSMetric:
+    """Learned Perceptual Image Patch Similarity."""
+    
+    def __init__(self, net: str = 'vgg', device: str = 'cuda'):
+        self.device = device
+        self.net_type = net
+        
+        # Load VGG for perceptual features
+        self._load_network()
+    
+    def _load_network(self):
+        """Load pretrained VGG network."""
+        try:
+            from torchvision.models import vgg16, VGG16_Weights
+            vgg = vgg16(weights=VGG16_Weights.IMAGENET1K_V1).features
+        except:
+            from torchvision.models import vgg16
+            vgg = vgg16(pretrained=True).features
+        
+        self.layers = [3, 8, 15, 22]  # relu1_2, relu2_2, relu3_3, relu4_3
+        
+        self.slices = nn.ModuleList()
+        prev = 0
+        for layer in self.layers:
+            self.slices.append(nn.Sequential(*list(vgg.children())[prev:layer]))
+            prev = layer
+        
+        self.slices = self.slices.to(self.device)
+        
+        for param in self.slices.parameters():
+            param.requires_grad = False
+        
+        # ImageNet normalization
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+    
+    def register_buffer(self, name, tensor):
+        setattr(self, name, tensor.to(self.device))
+    
+    def _preprocess(self, x: torch.Tensor) -> torch.Tensor:
+        """Convert to RGB and normalize."""
+        if x.shape[1] == 4:
+            x = x[:, :3]  # Use first 3 channels
+        elif x.shape[1] == 1:
+            x = x.repeat(1, 3, 1, 1)
+        
+        x = (x - self.mean) / self.std
+        return x
+    
+    def __call__(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor
+    ) -> torch.Tensor:
         """
-        Initialize FID.
+        Compute LPIPS.
         
         Args:
-            feature_extractor: Model to extract features. If None, uses simple CNN.
+            pred: Predicted image (B, C, H, W)
+            target: Target image (B, C, H, W)
+            
+        Returns:
+            LPIPS value (B,)
         """
-        if feature_extractor is None:
-            # Simple feature extractor for medical images
-            self.feature_extractor = nn.Sequential(
-                nn.Conv2d(4, 64, 4, 2, 1),
-                nn.LeakyReLU(0.2),
-                nn.Conv2d(64, 128, 4, 2, 1),
-                nn.LeakyReLU(0.2),
-                nn.Conv2d(128, 256, 4, 2, 1),
-                nn.LeakyReLU(0.2),
-                nn.AdaptiveAvgPool2d(1),
-                nn.Flatten()
-            )
-        else:
-            self.feature_extractor = feature_extractor
+        pred = self._preprocess(pred.to(self.device))
+        target = self._preprocess(target.to(self.device))
+        
+        diffs = []
+        pred_feat = pred
+        target_feat = target
+        
+        for slice_net in self.slices:
+            pred_feat = slice_net(pred_feat)
+            target_feat = slice_net(target_feat)
+            
+            diff = (pred_feat - target_feat) ** 2
+            diff = diff.mean(dim=[1, 2, 3])
+            diffs.append(diff)
+        
+        lpips = torch.stack(diffs, dim=1).sum(dim=1)
+        return lpips
     
+    def compute_batch(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor
+    ) -> Dict[str, float]:
+        """Compute batch statistics."""
+        lpips = self(pred, target)
+        return {
+            'lpips_mean': lpips.mean().item(),
+            'lpips_std': lpips.std().item(),
+            'lpips_min': lpips.min().item(),
+            'lpips_max': lpips.max().item()
+        }
+
+
+class FIDMetric:
+    """Fréchet Inception Distance."""
+    
+    def __init__(self, device: str = 'cuda'):
+        self.device = device
+        self._load_inception()
+    
+    def _load_inception(self):
+        """Load Inception network for feature extraction."""
+        try:
+            from torchvision.models import inception_v3, Inception_V3_Weights
+            self.inception = inception_v3(weights=Inception_V3_Weights.IMAGENET1K_V1, transform_input=False)
+        except:
+            from torchvision.models import inception_v3
+            self.inception = inception_v3(pretrained=True, transform_input=False)
+        
+        self.inception.fc = nn.Identity()
+        self.inception = self.inception.to(self.device)
+        self.inception.eval()
+        
+        for param in self.inception.parameters():
+            param.requires_grad = False
+    
+    def _preprocess(self, x: torch.Tensor) -> torch.Tensor:
+        """Preprocess for Inception."""
+        if x.shape[1] == 4:
+            x = x[:, :3]
+        elif x.shape[1] == 1:
+            x = x.repeat(1, 3, 1, 1)
+        
+        # Resize to 299x299
+        x = F.interpolate(x, size=(299, 299), mode='bilinear', align_corners=False)
+        
+        # Normalize
+        x = (x - 0.5) / 0.5
+        
+        return x
+    
+    @torch.no_grad()
     def extract_features(self, images: torch.Tensor) -> np.ndarray:
-        """Extract features from images."""
-        self.feature_extractor.eval()
-        self.feature_extractor.to(images.device)
-        
-        with torch.no_grad():
-            features = self.feature_extractor(images)
-        
+        """Extract Inception features."""
+        images = self._preprocess(images.to(self.device))
+        features = self.inception(images)
         return features.cpu().numpy()
     
     def compute_statistics(self, features: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Compute mean and covariance of features."""
+        """Compute mean and covariance."""
         mu = np.mean(features, axis=0)
         sigma = np.cov(features, rowvar=False)
         return mu, sigma
     
     def __call__(
         self,
-        real_images: torch.Tensor,
-        fake_images: torch.Tensor
+        real_features: np.ndarray,
+        fake_features: np.ndarray
     ) -> float:
         """
-        Compute FID between real and fake images.
+        Compute FID between two sets of features.
         
         Args:
-            real_images: Real images (B, C, H, W)
-            fake_images: Generated images (B, C, H, W)
+            real_features: Features from real images (N, D)
+            fake_features: Features from generated images (N, D)
             
         Returns:
-            FID score (lower is better)
+            FID score
         """
-        real_features = self.extract_features(real_images)
-        fake_features = self.extract_features(fake_images)
-        
         mu1, sigma1 = self.compute_statistics(real_features)
         mu2, sigma2 = self.compute_statistics(fake_features)
         
-        # Compute FID
         diff = mu1 - mu2
         
-        # Product might be almost singular
-        covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
-        
-        if not np.isfinite(covmean).all():
-            offset = np.eye(sigma1.shape[0]) * 1e-6
-            covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
+        # Product of covariances
+        covmean, _ = linalg.sqrtm(sigma1 @ sigma2, disp=False)
         
         if np.iscomplexobj(covmean):
             covmean = covmean.real
         
-        fid = diff.dot(diff) + np.trace(sigma1 + sigma2 - 2 * covmean)
+        fid = diff @ diff + np.trace(sigma1 + sigma2 - 2 * covmean)
         
         return float(fid)
 
 
-class MetricsCalculator:
-    """Calculator for multiple image quality metrics."""
+class MAEMetric:
+    """Mean Absolute Error metric."""
     
-    def __init__(self, device: str = 'cuda'):
-        self.device = device
-        self.psnr = PSNR()
-        self.ssim = SSIM()
+    def __call__(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute MAE."""
+        mae = torch.abs(pred - target).view(pred.shape[0], -1).mean(dim=1)
+        return mae
     
-    @torch.no_grad()
-    def calculate(
+    def compute_batch(
         self,
         pred: torch.Tensor,
         target: torch.Tensor
     ) -> Dict[str, float]:
-        """
-        Calculate all metrics.
-        
-        Args:
-            pred: Predicted images
-            target: Target images
-            
-        Returns:
-            Dictionary of metric values
-        """
-        pred = pred.to(self.device)
-        target = target.to(self.device)
-        
-        # Ensure values are in [0, 1]
-        pred = torch.clamp(pred, 0, 1)
-        target = torch.clamp(target, 0, 1)
-        
-        metrics = {
-            'psnr': self.psnr(pred, target).item(),
-            'ssim': self.ssim(pred, target).item(),
-            'mse': F.mse_loss(pred, target).item(),
-            'mae': F.l1_loss(pred, target).item()
+        """Compute batch statistics."""
+        mae = self(pred, target)
+        return {
+            'mae_mean': mae.mean().item(),
+            'mae_std': mae.std().item(),
+            'mae_min': mae.min().item(),
+            'mae_max': mae.max().item()
         }
-        
-        return metrics
+
+
+class NRMSEMetric:
+    """Normalized Root Mean Squared Error."""
     
-    @torch.no_grad()
-    def calculate_batch(
+    def __call__(
         self,
         pred: torch.Tensor,
         target: torch.Tensor
-    ) -> Dict[str, torch.Tensor]:
-        """Calculate metrics for each sample in batch."""
-        pred = pred.to(self.device)
-        target = target.to(self.device)
+    ) -> torch.Tensor:
+        """Compute NRMSE."""
+        mse = F.mse_loss(pred, target, reduction='none')
+        mse = mse.view(mse.shape[0], -1).mean(dim=1)
+        rmse = torch.sqrt(mse)
         
-        batch_size = pred.shape[0]
+        # Normalize by target range
+        target_flat = target.view(target.shape[0], -1)
+        target_range = target_flat.max(dim=1)[0] - target_flat.min(dim=1)[0]
+        nrmse = rmse / (target_range + 1e-8)
         
-        psnr_values = []
-        ssim_values = []
-        
-        for i in range(batch_size):
-            psnr_values.append(self.psnr(pred[i:i+1], target[i:i+1]))
-            ssim_values.append(self.ssim(pred[i:i+1], target[i:i+1]))
-        
-        return {
-            'psnr': torch.stack(psnr_values),
-            'ssim': torch.stack(ssim_values)
-        }
+        return nrmse
 
 
-def compute_reconstruction_metrics(
-    model: nn.Module,
-    dataloader: torch.utils.data.DataLoader,
-    device: str = 'cuda',
-    num_batches: Optional[int] = None
-) -> Dict[str, float]:
+class MetricsCalculator:
     """
-    Compute reconstruction metrics for a VAE model.
+    Unified metrics calculator for medical image quality assessment.
+    """
     
-    Args:
-        model: VAE model
-        dataloader: Data loader
-        device: Device to use
-        num_batches: Number of batches to evaluate (None for all)
+    def __init__(self, config: Optional[MetricsConfig] = None):
+        if config is None:
+            config = MetricsConfig()
         
-    Returns:
-        Dictionary of average metrics
-    """
-    model.eval()
-    model.to(device)
+        self.config = config
+        self.device = config.device
+        
+        # Initialize metrics
+        self.psnr = PSNRMetric()
+        self.ssim = SSIMMetric(
+            window_size=config.ssim_window_size,
+            sigma=config.ssim_sigma
+        )
+        self.mae = MAEMetric()
+        self.nrmse = NRMSEMetric()
+        
+        # Lazy initialization for heavy metrics
+        self._lpips = None
+        self._fid = None
     
-    calculator = MetricsCalculator(device)
+    @property
+    def lpips(self):
+        if self._lpips is None:
+            self._lpips = LPIPSMetric(net=self.config.lpips_net, device=self.device)
+        return self._lpips
     
-    all_psnr = []
-    all_ssim = []
-    all_mse = []
+    @property
+    def fid(self):
+        if self._fid is None:
+            self._fid = FIDMetric(device=self.device)
+        return self._fid
     
-    with torch.no_grad():
-        for i, batch in enumerate(dataloader):
-            if num_batches is not None and i >= num_batches:
-                break
+    def compute_all(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        include_lpips: bool = True,
+        include_fid: bool = False,
+        real_images: Optional[torch.Tensor] = None
+    ) -> Dict[str, float]:
+        """
+        Compute all metrics.
+        
+        Args:
+            pred: Predicted images (B, C, H, W)
+            target: Target images (B, C, H, W)
+            include_lpips: Whether to compute LPIPS
+            include_fid: Whether to compute FID
+            real_images: Real images for FID computation
             
-            images = batch['image'].to(device)
-            recons = model.reconstruct(images)
-            
-            # Clamp to valid range
-            recons = torch.clamp(recons, 0, 1)
-            
-            metrics = calculator.calculate(recons, images)
-            
-            all_psnr.append(metrics['psnr'])
-            all_ssim.append(metrics['ssim'])
-            all_mse.append(metrics['mse'])
+        Returns:
+            Dictionary of all metrics
+        """
+        metrics = {}
+        
+        # Basic metrics
+        metrics.update(self.psnr.compute_batch(pred, target))
+        metrics.update(self.ssim.compute_batch(pred, target))
+        metrics.update(self.mae.compute_batch(pred, target))
+        
+        nrmse = self.nrmse(pred, target)
+        metrics['nrmse_mean'] = nrmse.mean().item()
+        metrics['nrmse_std'] = nrmse.std().item()
+        
+        # LPIPS
+        if include_lpips:
+            metrics.update(self.lpips.compute_batch(pred, target))
+        
+        # FID
+        if include_fid and real_images is not None:
+            real_features = self.fid.extract_features(real_images)
+            fake_features = self.fid.extract_features(pred)
+            metrics['fid'] = self.fid(real_features, fake_features)
+        
+        return metrics
     
-    return {
-        'psnr': np.mean(all_psnr),
-        'ssim': np.mean(all_ssim),
-        'mse': np.mean(all_mse),
-        'psnr_std': np.std(all_psnr),
-        'ssim_std': np.std(all_ssim)
-    }
+    def compute_per_sample(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor
+    ) -> List[Dict[str, float]]:
+        """
+        Compute metrics for each sample.
+        
+        Returns:
+            List of metric dictionaries, one per sample
+        """
+        results = []
+        
+        psnr_values = self.psnr(pred, target)
+        ssim_values = self.ssim(pred, target)
+        mae_values = self.mae(pred, target)
+        nrmse_values = self.nrmse(pred, target)
+        
+        for i in range(pred.shape[0]):
+            results.append({
+                'psnr': psnr_values[i].item(),
+                'ssim': ssim_values[i].item(),
+                'mae': mae_values[i].item(),
+                'nrmse': nrmse_values[i].item()
+            })
+        
+        return results
+
+
+def compute_psnr(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Convenience function for PSNR."""
+    return PSNRMetric()(pred, target)
+
+
+def compute_ssim(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Convenience function for SSIM."""
+    return SSIMMetric()(pred, target)

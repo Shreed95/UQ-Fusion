@@ -31,7 +31,7 @@ def parse_args():
                         help='Path to preprocessed data directory')
     parser.add_argument('--batch_size', type=int, default=8,
                         help='Batch size for training')
-    parser.add_argument('--num_workers', type=int, default=4,
+    parser.add_argument('--num_workers', type=int, default=2,
                         help='Number of data loading workers')
     
     # Model

@@ -11,6 +11,7 @@ from tqdm import tqdm
 import json
 import time
 from dataclasses import dataclass, asdict
+import gc
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -291,14 +292,16 @@ class VAETrainer:
             num_batches += 1
             
             # Update progress bar
-            pbar.set_postfix({
-                'loss': f"{loss.item():.4f}",
-                'recon': f"{loss_dict['recon_loss'].item():.4f}",
-                'kl': f"{loss_dict['kl_loss'].item():.6f}"
-            })
+            if num_batches % 50 == 0:
+                pbar.set_postfix({
+                    'loss': f"{loss.item():.4f}",
+                    'recon': f"{loss_dict['recon_loss'].item():.4f}",
+                    'kl': f"{loss_dict['kl_loss'].item():.6f}"
+                })
             
             # Logging
-            self.writer.add_scalar('train/loss_step', loss.item(), self.global_step)
+            if self.global_step % 100 == 0:
+                self.writer.add_scalar('train/loss_step', loss.item(), self.global_step)
             self.global_step += 1
         
         # Compute epoch averages
@@ -452,6 +455,13 @@ class VAETrainer:
             # Update scheduler
             if self.scheduler is not None and self.epoch >= self.config.warmup_epochs:
                 self.scheduler.step()
+            gc.collect()
+
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         
         # Save final history
         with open(self.checkpoint_dir / 'history.json', 'w') as f:
