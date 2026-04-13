@@ -38,6 +38,9 @@ archive/
 data/slices/
 data/splits/
 data/processed/
+data1/slices/
+data1/splits/
+data1/processed/
 *.npz
 *.h5
 *.hdf5

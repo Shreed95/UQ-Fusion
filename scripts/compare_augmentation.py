@@ -37,9 +37,9 @@ def parse_args():
                         help='Optional: synthetic-only checkpoint for ablation')
     parser.add_argument('--data_dir', type=str, default='./data')
     parser.add_argument('--batch_size', type=int, default=8)
-    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--output_dir', type=str, default='./outputs/evaluation/comparison')
-    parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--device', type=str, default='mps' if torch.backends.mps.is_available() else 'cpu') 
     
     return parser.parse_args()
 

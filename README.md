@@ -12,30 +12,30 @@ UQ-Fusion is a novel hybrid generative framework for expanding medical image dat
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     UQ-FUSION FRAMEWORK                      │
+│                     UQ-FUSION FRAMEWORK                     │
 ├─────────────────────────────────────────────────────────────┤
 │  [INPUT] BraTS 2020 MRI Slices (4 modalities)               │
-│                           │                                  │
+│                           │                                 │
 │              ┌────────────┴────────────┐                    │
 │              ▼                         ▼                    │
-│     ┌─────────────────┐       ┌─────────────────┐          │
-│     │ Diffusion Branch│       │ STABLE-GAN      │          │
-│     │ (VAE + U-Net)   │       │ (ResNet-9)      │          │
-│     └────────┬────────┘       └────────┬────────┘          │
+│     ┌─────────────────┐       ┌─────────────────┐           │
+│     │ Diffusion Branch│       │ STABLE-GAN      │           │
+│     │ (VAE + U-Net)   │       │ (ResNet-9)      │           │
+│     └────────┬────────┘       └────────┬────────┘           │
 │              │ I_diff + U_diff          │ I_gan + U_gan     │
 │              └────────────┬─────────────┘                   │
-│                           ▼                                  │
+│                           ▼                                 │
 │              ┌─────────────────────────┐                    │
 │              │ Uncertainty-Guided      │                    │
 │              │ Fusion Module           │                    │
 │              │ I = α⊙I_diff + β⊙I_gan  │                    │
 │              └────────────┬────────────┘                    │
-│                           ▼                                  │
+│                           ▼                                 │
 │              ┌─────────────────────────┐                    │
 │              │ Statistical Validation  │                    │
 │              │ (PSNR, SSIM, FID, LPIPS)│                    │
 │              └────────────┬────────────┘                    │
-│                           ▼                                  │
+│                           ▼                                 │
 │  [OUTPUT] Validated Expanded Dataset                        │
 └─────────────────────────────────────────────────────────────┘
 ```

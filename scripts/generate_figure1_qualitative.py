@@ -86,7 +86,7 @@ def load_models(args, device):
         num_residual_blocks=gan_config.get('num_residual_blocks', 6),
         use_dropout=False
     )
-    generator.load_state_dict(gan_ckpt['generator_state_dict'])
+    generator.load_state_dict(gan_ckpt['generator_state_dict'], strict=False)
     generator.to(device)
     generator.eval()
     

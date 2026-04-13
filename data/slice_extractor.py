@@ -31,6 +31,10 @@ class SliceExtractor:
     """
     Extract 2D slices from 3D volumes with intelligent sampling.
     Supports tumor-aware sampling and filtering of non-informative slices.
+    
+    When target_slices is small (<=15), uses spatially-distributed selection
+    to ensure selected slices are well-spread across the brain volume and
+    capture diverse anatomical regions including both tumor and non-tumor areas.
     """
     
     ORIENTATIONS = {
@@ -44,7 +48,8 @@ class SliceExtractor:
         orientation: str = 'axial',
         min_brain_fraction: float = 0.05,
         tumor_priority: bool = True,
-        target_slices: Optional[int] = None
+        target_slices: Optional[int] = None,
+        min_non_tumor_ratio: float = 0.3
     ):
         """
         Initialize slice extractor.
@@ -54,6 +59,9 @@ class SliceExtractor:
             min_brain_fraction: Minimum fraction of brain tissue required
             tumor_priority: Whether to prioritize slices with tumor
             target_slices: Target number of slices per volume (None for all valid)
+            min_non_tumor_ratio: Minimum fraction of selected slices that should be
+                                 non-tumor (for segmentation negative examples).
+                                 Only used when target_slices <= 15.
         """
         if orientation not in self.ORIENTATIONS:
             raise ValueError(f"Invalid orientation: {orientation}")
@@ -63,6 +71,7 @@ class SliceExtractor:
         self.min_brain_fraction = min_brain_fraction
         self.tumor_priority = tumor_priority
         self.target_slices = target_slices
+        self.min_non_tumor_ratio = min_non_tumor_ratio
         
     def compute_brain_mask(self, volume: np.ndarray) -> np.ndarray:
         """Compute brain mask from volume."""
@@ -223,12 +232,115 @@ class SliceExtractor:
         
         return valid_slices
     
+    def _select_slices_sparse(
+        self,
+        valid_slices: List[Tuple[int, float, float]]
+    ) -> List[int]:
+        """
+        Spatially-distributed slice selection for small target counts (<=15).
+        
+        Strategy:
+          1. Divide the valid slice range into N equal spatial zones
+          2. From each zone, pick the best representative slice
+          3. Ensure a minimum number of non-tumor slices for segmentation balance
+          4. Within each zone, prefer tumor slices (sorted by tumor_fraction desc),
+             unless the non-tumor quota has not been met yet
+        
+        This guarantees:
+          - Slices are spread across the full axial extent of the brain
+          - No two selected slices are adjacent or clustered
+          - Both tumor and healthy tissue are represented
+        
+        Args:
+            valid_slices: List of (idx, brain_frac, tumor_frac) tuples
+            
+        Returns:
+            List of selected slice indices
+        """
+        n_target = self.target_slices
+        n_valid = len(valid_slices)
+        
+        if n_valid <= n_target:
+            return [s[0] for s in valid_slices]
+        
+        # Separate tumor and non-tumor
+        tumor_slices = [(idx, bf, tf) for idx, bf, tf in valid_slices if tf > 0]
+        non_tumor_slices = [(idx, bf, tf) for idx, bf, tf in valid_slices if tf == 0]
+        
+        # Compute how many non-tumor slices we need (minimum)
+        min_non_tumor = max(1, int(np.ceil(n_target * self.min_non_tumor_ratio)))
+        # But don't require more non-tumor than available
+        min_non_tumor = min(min_non_tumor, len(non_tumor_slices))
+        # And don't let non-tumor eat all slots if there are tumor slices
+        if len(tumor_slices) > 0:
+            min_non_tumor = min(min_non_tumor, n_target - 1)
+        
+        n_tumor_slots = n_target - min_non_tumor
+        n_non_tumor_slots = min_non_tumor
+        
+        # --- Select tumor slices with spatial spread ---
+        tumor_selected = self._pick_from_zones(tumor_slices, n_tumor_slots)
+        
+        # --- Select non-tumor slices with spatial spread ---
+        non_tumor_selected = self._pick_from_zones(non_tumor_slices, n_non_tumor_slots)
+        
+        selected = tumor_selected + non_tumor_selected
+        return sorted(selected)
+    
+    def _pick_from_zones(
+        self,
+        candidates: List[Tuple[int, float, float]],
+        n_picks: int
+    ) -> List[int]:
+        """
+        Divide candidates into n_picks spatial zones and pick the best from each.
+        
+        'Best' = highest tumor_fraction for tumor slices,
+                 highest brain_fraction for non-tumor slices.
+        
+        Args:
+            candidates: List of (idx, brain_frac, tumor_frac)
+            n_picks: Number of slices to pick
+            
+        Returns:
+            List of selected slice indices
+        """
+        if n_picks <= 0 or len(candidates) == 0:
+            return []
+        
+        if len(candidates) <= n_picks:
+            return [c[0] for c in candidates]
+        
+        # Sort candidates by their axial index for spatial ordering
+        candidates_sorted = sorted(candidates, key=lambda x: x[0])
+        
+        # Divide into n_picks equal zones
+        zone_size = len(candidates_sorted) / n_picks
+        selected = []
+        
+        for i in range(n_picks):
+            zone_start = int(i * zone_size)
+            zone_end = int((i + 1) * zone_size)
+            zone = candidates_sorted[zone_start:zone_end]
+            
+            if not zone:
+                continue
+            
+            # Pick best in zone: prefer higher tumor_fraction, break ties with brain_fraction
+            best = max(zone, key=lambda x: (x[2], x[1]))
+            selected.append(best[0])
+        
+        return selected
+    
     def select_slices(
         self,
         valid_slices: List[Tuple[int, float, float]]
     ) -> List[int]:
         """
         Select final slice indices based on tumor priority and target count.
+        
+        For small targets (<=15): uses spatially-distributed selection
+        For large targets (>15): uses the original dense selection strategy
         
         Args:
             valid_slices: List of (idx, brain_frac, tumor_frac) tuples
@@ -242,6 +354,11 @@ class SliceExtractor:
         if self.target_slices is None or len(valid_slices) <= self.target_slices:
             return [s[0] for s in valid_slices]
         
+        # Use sparse spatially-distributed selection for small targets
+        if self.target_slices <= 15:
+            return self._select_slices_sparse(valid_slices)
+        
+        # Original dense selection for large targets
         if self.tumor_priority:
             # Separate tumor and non-tumor slices
             tumor_slices = [(idx, bf, tf) for idx, bf, tf in valid_slices if tf > 0]

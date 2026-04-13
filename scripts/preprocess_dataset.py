@@ -4,8 +4,17 @@
 Script to preprocess BraTS 2020 dataset.
 Extracts 2D slices from 3D volumes with normalization.
 
-Usage:
-    python scripts/preprocess_dataset.py --data_dir /path/to/BraTS2020_TrainingData --output_dir ./data
+Usage (sparse mode - 5 slices per patient):
+    python scripts/preprocess_dataset.py \
+        --data_dir /path/to/BraTS2020_TrainingData \
+        --output_dir ./data \
+        --target_slices 5
+
+Usage (dense mode - 100 slices per patient, original behavior):
+    python scripts/preprocess_dataset.py \
+        --data_dir /path/to/BraTS2020_TrainingData \
+        --output_dir ./data \
+        --target_slices 100
 """
 
 import argparse
@@ -51,10 +60,12 @@ def parse_args():
                         help='Slice orientation')
     parser.add_argument('--min_brain_fraction', type=float, default=0.05,
                         help='Minimum brain fraction to keep slice')
-    parser.add_argument('--target_slices', type=int, default=100,
-                        help='Target number of slices per volume')
+    parser.add_argument('--target_slices', type=int, default=5,
+                        help='Target number of slices per volume (default: 5 for sparse mode)')
     parser.add_argument('--tumor_priority', action='store_true', default=True,
                         help='Prioritize slices with tumor')
+    parser.add_argument('--min_non_tumor_ratio', type=float, default=0.3,
+                        help='Minimum fraction of non-tumor slices when target_slices<=15')
     
     # Dataset split
     parser.add_argument('--train_ratio', type=float, default=0.7)
@@ -65,7 +76,7 @@ def parse_args():
     parser.add_argument(
         '--max_train_slices',
         type=int,
-        default=5000,
+        default=None,
         help='Cap number of slices in training split. Set <= 0 to disable.'
     )
 
@@ -91,17 +102,24 @@ def main():
     slices_dir.mkdir(exist_ok=True)
     processed_dir.mkdir(exist_ok=True)
     
+    mode_str = "SPARSE" if args.target_slices <= 15 else "DENSE"
+    
     print("=" * 60)
     print("BraTS 2020 Dataset Preprocessing")
     print("=" * 60)
     print(f"Data directory: {args.data_dir}")
     print(f"Output directory: {args.output_dir}")
+    print(f"Mode: {mode_str} ({args.target_slices} slices/patient)")
     print(f"Orientation: {args.orientation}")
     print(f"Target slices per volume: {args.target_slices}")
+    if args.target_slices <= 15:
+        print(f"Min non-tumor ratio: {args.min_non_tumor_ratio}")
+        print(f"  -> ~{max(1, int(args.target_slices * args.min_non_tumor_ratio))} non-tumor + "
+              f"~{args.target_slices - max(1, int(args.target_slices * args.min_non_tumor_ratio))} tumor per patient")
     print("=" * 60)
     
     # Initialize loader
-    print("\n[1/4] Initializing data loader...")
+    print("\n[1/5] Initializing data loader...")
     if args.cache_dir:
         loader = CachedNIfTILoader(args.data_dir, args.cache_dir)
         print("Building cache (this may take a while on first run)...")
@@ -109,10 +127,12 @@ def main():
     else:
         loader = NIfTILoader(args.data_dir)
     
-    print(f"Found {len(loader)} patients")
+    n_patients = len(loader)
+    print(f"Found {n_patients} patients")
+    print(f"Expected total slices: ~{n_patients * args.target_slices}")
     
     # Initialize preprocessor
-    print("\n[2/4] Initializing preprocessor...")
+    print("\n[2/5] Initializing preprocessor...")
     preprocessor = VolumePreprocessor(
         clip_percentile_low=args.clip_low,
         clip_percentile_high=args.clip_high,
@@ -120,16 +140,17 @@ def main():
     )
     
     # Initialize slice extractor
-    print("\n[3/4] Initializing slice extractor...")
+    print("\n[3/5] Initializing slice extractor...")
     extractor = SliceExtractor(
         orientation=args.orientation,
         min_brain_fraction=args.min_brain_fraction,
         tumor_priority=args.tumor_priority,
-        target_slices=args.target_slices
+        target_slices=args.target_slices,
+        min_non_tumor_ratio=args.min_non_tumor_ratio
     )
     
     # Build slice dataset
-    print("\n[4/4] Extracting slices from volumes...")
+    print("\n[4/5] Extracting slices from volumes...")
     builder = SliceDatasetBuilder(extractor, output_dir)
     
     patients_data = []
@@ -148,6 +169,11 @@ def main():
     
     # Extract and save slices
     total_slices = builder.build_dataset(patients_data, show_progress=True)
+    
+    # Compute statistics from metadata
+    metadata = builder.metadata
+    n_tumor = sum(1 for m in metadata if m.get('has_tumor', False))
+    n_non_tumor = total_slices - n_tumor
     
     # Create dataset splits
     print("\n[5/5] Creating dataset splits...")
@@ -176,6 +202,9 @@ def main():
     print("Preprocessing Complete!")
     print("=" * 60)
     print(f"Total slices extracted: {total_slices}")
+    print(f"  Tumor slices: {n_tumor} ({100*n_tumor/max(1,total_slices):.1f}%)")
+    print(f"  Non-tumor slices: {n_non_tumor} ({100*n_non_tumor/max(1,total_slices):.1f}%)")
+    print(f"  Avg slices per patient: {total_slices/max(1,n_patients):.1f}")
     print(f"Training samples: {len(data_module.train_dataset)}")
     print(f"Validation samples: {len(data_module.val_dataset)}")
     print(f"Test samples: {len(data_module.test_dataset)}")
