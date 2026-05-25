@@ -26,7 +26,7 @@ from tqdm import tqdm
 
 from data import BraTSSliceDataset
 from models.vae import VAE, VAEConfig
-from models.diffusion import LatentDiffusionModelSmall
+from models.diffusion import LatentDiffusionModelSmall, LatentDiffusionModel, LatentDiffusionConfig
 from models.gan import STABLEGeneratorSmall
 from models.uncertainty import UncertaintyAwareDualBranch, UncertaintyWrapperConfig
 from models.fusion import UQFusionModule, create_fusion_module
@@ -77,18 +77,21 @@ def load_models(args, device):
     vae.load_state_dict(vae_ckpt['model_state_dict'])
     vae.to(device).eval()
 
-    # Diffusion
+    # Diffusion (FIXED: Now uses standard LatentDiffusionModel)
     diff_ckpt = torch.load(args.diffusion_checkpoint, map_location='cpu')
     diff_cfg = diff_ckpt.get('config', {})
-    diffusion = LatentDiffusionModelSmall(
+    
+    diff_config_obj = LatentDiffusionConfig(
         latent_channels=diff_cfg.get('latent_channels', 4),
         base_channels=diff_cfg.get('base_channels', 64),
-        num_timesteps=diff_cfg.get('num_timesteps', 1000))
+        num_timesteps=diff_cfg.get('num_timesteps', 1000)
+    )
+    diffusion = LatentDiffusionModel(config=diff_config_obj)
     diffusion.unet.load_state_dict(diff_ckpt['model_state_dict'])
     diffusion.set_vae(vae)
     diffusion.to(device).eval()
 
-    # GAN — load as-trained
+    # GAN — load as-trained (This is correctly 'small')
     gan_ckpt = torch.load(args.gan_checkpoint, map_location='cpu')
     gan_cfg = gan_ckpt.get('config', {})
     generator = STABLEGeneratorSmall(

@@ -139,7 +139,6 @@ class DownBlock(nn.Module):
             x = self.downsample(x)
         return x, skips
 
-
 class UpBlock(nn.Module):
     """Upsampling block for U-Net decoder."""
     def __init__(self, in_channels, out_channels, skip_channels, time_embed_dim,
@@ -147,23 +146,38 @@ class UpBlock(nn.Module):
         super().__init__()
         self.res_blocks = nn.ModuleList()
         self.attn_blocks = nn.ModuleList()
+        
+        single_skip_ch = skip_channels // num_res_blocks if num_res_blocks > 0 else skip_channels
+
         for i in range(num_res_blocks):
-            in_ch = in_channels + skip_channels if i == 0 else out_channels
+            in_ch = in_channels + single_skip_ch if i == 0 else out_channels + single_skip_ch
+            
             self.res_blocks.append(ResidualBlock(in_ch, out_channels, time_embed_dim, dropout=dropout))
             self.attn_blocks.append(AttentionBlock(out_channels, num_heads) if use_attention else nn.Identity())
+            
         self.upsample = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='nearest'),
-            nn.Conv2d(in_channels, in_channels, 3, padding=1)
+            nn.Conv2d(out_channels, out_channels, 3, padding=1)
         ) if upsample else None
 
     def forward(self, x, t_embed, skips):
-        if self.upsample is not None:
-            x = self.upsample(x)
-        for i, (res, attn) in enumerate(zip(self.res_blocks, self.attn_blocks)):
-            if i < len(skips):
-                x = torch.cat([x, skips.pop()], dim=1)
+        # 1. Process skip connections and residual blocks FIRST
+        for res, attn in zip(self.res_blocks, self.attn_blocks):
+            # THE FIX: Check if the list has items, not relying on the dynamic index 'i'
+            if len(skips) > 0: 
+                skip = skips.pop()
+                if x.shape[-2:] != skip.shape[-2:]:
+                    x = F.interpolate(x, size=skip.shape[-2:], mode='nearest')
+                
+                x = torch.cat([x, skip], dim=1)
+                
             x = res(x, t_embed)
             x = attn(x)
+            
+        # 2. Upsample at the END of the block
+        if self.upsample is not None:
+            x = self.upsample(x)
+            
         return x
 
 

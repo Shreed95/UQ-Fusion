@@ -28,7 +28,7 @@ def main():
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--kl_weight', type=float, default=0.0001)
-    parser.add_argument('--ssim_weight', type=float, default=0.0)
+    parser.add_argument('--ssim_weight', type=float, default=0.5)
     parser.add_argument('--base_channels', type=int, default=64)
     parser.add_argument('--latent_channels', type=int, default=4)
     parser.add_argument('--checkpoint_dir', type=str, default='./outputs/checkpoints/vae')

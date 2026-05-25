@@ -246,7 +246,7 @@ def load_uncertainty_aware_models(
 ):
     """Load pre-trained models and wrap with hybrid uncertainty."""
     from models.vae import VAE, VAEConfig
-    from models.diffusion import LatentDiffusionModelSmall
+    from models.diffusion.diffusion import LatentDiffusionModel, LatentDiffusionConfig
     from models.gan import STABLEGeneratorSmall
 
     # Load VAE (read config from checkpoint)
@@ -259,13 +259,16 @@ def load_uncertainty_aware_models(
     vae.load_state_dict(vae_ckpt['model_state_dict'])
     vae.eval()
 
-    # Load Diffusion
+    # Load Diffusion (FIXED: Now loads the Standard architecture)
     diff_ckpt = torch.load(diffusion_checkpoint, map_location='cpu')
     diff_cfg = diff_ckpt.get('config', {})
-    diffusion = LatentDiffusionModelSmall(
+    
+    diff_config_obj = LatentDiffusionConfig(
         latent_channels=diff_cfg.get('latent_channels', 4),
         base_channels=diff_cfg.get('base_channels', 64),
-        num_timesteps=diff_cfg.get('num_timesteps', 1000))
+        num_timesteps=diff_cfg.get('num_timesteps', 1000)
+    )
+    diffusion = LatentDiffusionModel(config=diff_config_obj)
     diffusion.unet.load_state_dict(diff_ckpt['model_state_dict'])
     diffusion.set_vae(vae)
     diffusion.eval()

@@ -8,6 +8,7 @@ Usage:
     python scripts/evaluate_diffusion.py \
         --checkpoint ./outputs/checkpoints/diffusion/best.pth \
         --vae_checkpoint ./outputs/checkpoints/vae/best.pth \
+        --model_type standard \
         --data_dir ./data --device mps
 """
 
@@ -24,7 +25,12 @@ from tqdm import tqdm
 
 from data import BraTSSliceDataset
 from models.vae import VAE, VAEConfig
-from models.diffusion import LatentDiffusionModelSmall, DDIMSampler
+
+# Import all diffusion components needed to rebuild both architectures
+from models.diffusion.unet import create_unet
+from models.diffusion.scheduler import DDPMScheduler, SchedulerConfig
+from models.diffusion.diffusion import LatentDiffusionModel, LatentDiffusionModelSmall, LatentDiffusionConfig
+from models.diffusion.sampler import DDIMSampler
 
 
 def compute_psnr(pred, target):
@@ -32,7 +38,7 @@ def compute_psnr(pred, target):
     return 50.0 if mse < 1e-10 else 10 * np.log10(1.0 / mse)
 
 
-def load_models(diffusion_path, vae_path, device):
+def load_models(diffusion_path, vae_path, device, model_type='standard'):
     """Load VAE and Diffusion models."""
     # Load VAE
     vae_ckpt = torch.load(vae_path, map_location='cpu')
@@ -48,10 +54,25 @@ def load_models(diffusion_path, vae_path, device):
     # Load Diffusion
     diff_ckpt = torch.load(diffusion_path, map_location='cpu')
     diff_cfg = diff_ckpt.get('config', {})
-    diffusion = LatentDiffusionModelSmall(
-        latent_channels=diff_cfg.get('latent_channels', 4),
-        base_channels=diff_cfg.get('base_channels', 64),
-        num_timesteps=diff_cfg.get('num_timesteps', 1000))
+    
+    latent_channels = diff_cfg.get('latent_channels', 4)
+    base_channels = diff_cfg.get('base_channels', 64)
+    num_timesteps = diff_cfg.get('num_timesteps', 1000)
+
+    if model_type == 'small':
+        diffusion = LatentDiffusionModelSmall(
+            latent_channels=latent_channels,
+            base_channels=base_channels,
+            num_timesteps=num_timesteps)
+    else:
+        # Create the standard config and pass it to the model
+        diff_config = LatentDiffusionConfig(
+            latent_channels=latent_channels,
+            base_channels=base_channels,
+            num_timesteps=num_timesteps
+        )
+        diffusion = LatentDiffusionModel(config=diff_config)
+
     diffusion.unet.load_state_dict(diff_ckpt['model_state_dict'])
     diffusion.set_vae(vae)
     diffusion.to(device)
@@ -92,6 +113,7 @@ def main():
     parser = argparse.ArgumentParser(description='Evaluate Diffusion Model')
     parser.add_argument('--checkpoint', type=str, required=True)
     parser.add_argument('--vae_checkpoint', type=str, required=True)
+    parser.add_argument('--model_type', type=str, default='standard', choices=['standard', 'small'])
     parser.add_argument('--data_dir', type=str, default='./data')
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--output_dir', type=str, default='./outputs/evaluation/diffusion')
@@ -116,12 +138,13 @@ def main():
     print("=" * 60)
     print(f"Checkpoint: {args.checkpoint}")
     print(f"VAE: {args.vae_checkpoint}")
+    print(f"Model: {args.model_type}")
     print(f"Device: {device} | Steps: {args.num_inference_steps}")
     print("=" * 60)
 
     # Load models
     print("\n[1/4] Loading models...")
-    vae, diffusion, ckpt = load_models(args.checkpoint, args.vae_checkpoint, device)
+    vae, diffusion, ckpt = load_models(args.checkpoint, args.vae_checkpoint, device, args.model_type)
     print(f"Loaded from epoch {ckpt.get('epoch', '?') + 1}")
 
     # Load data

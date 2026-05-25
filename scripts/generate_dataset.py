@@ -16,7 +16,7 @@ from datetime import datetime
 
 from data import BraTSSliceDataset
 from models.vae import VAE, VAEConfig
-from models.diffusion import LatentDiffusionModelSmall
+from models.diffusion import LatentDiffusionModelSmall, LatentDiffusionModel, LatentDiffusionConfig
 from models.gan import STABLEGeneratorSmall
 from models.uncertainty import UncertaintyAwareDualBranch, UncertaintyWrapperConfig
 from models.fusion import create_fusion_module
@@ -41,6 +41,7 @@ def parse_args():
     parser.add_argument('--num_mc_samples', type=int, default=5)
     parser.add_argument('--diffusion_steps', type=int, default=50)
     parser.add_argument('--diffusion_strength', type=float, default=0.8)
+    parser.add_argument('--lambda_mc', type=float, default=0.5)
     parser.add_argument('--acceptance_threshold', type=float, default=0.5)  # safer default
     parser.add_argument('--output_dir', type=str, default='./outputs/expanded_dataset')
     parser.add_argument('--save_rejected', action='store_true')
@@ -56,6 +57,7 @@ def parse_args():
 
 
 def load_models(args, device):
+    # VAE
     vae_ckpt = torch.load(args.vae_checkpoint, map_location='cpu')
     vae_cfg = vae_ckpt.get('config', {})
     vae = VAE(VAEConfig(
@@ -65,16 +67,21 @@ def load_models(args, device):
     vae.load_state_dict(vae_ckpt['model_state_dict'])
     vae.to(device).eval()
 
+    # Diffusion (FIXED: Now uses standard LatentDiffusionModel)
     diff_ckpt = torch.load(args.diffusion_checkpoint, map_location='cpu')
     diff_cfg = diff_ckpt.get('config', {})
-    diffusion = LatentDiffusionModelSmall(
+    
+    diff_config_obj = LatentDiffusionConfig(
         latent_channels=diff_cfg.get('latent_channels', 4),
         base_channels=diff_cfg.get('base_channels', 64),
-        num_timesteps=diff_cfg.get('num_timesteps', 1000))
+        num_timesteps=diff_cfg.get('num_timesteps', 1000)
+    )
+    diffusion = LatentDiffusionModel(config=diff_config_obj)
     diffusion.unet.load_state_dict(diff_ckpt['model_state_dict'])
     diffusion.set_vae(vae)
     diffusion.to(device).eval()
 
+    # GAN — load as-trained
     gan_ckpt = torch.load(args.gan_checkpoint, map_location='cpu')
     gan_cfg = gan_ckpt.get('config', {})
     generator = STABLEGeneratorSmall(
@@ -93,7 +100,7 @@ def create_pipeline(diffusion, generator, args, device):
         num_mc_samples=args.num_mc_samples,
         normalize_uncertainty=False,
         estimate_aleatoric=False,
-        lambda_mc_variance=0.0
+        lambda_mc_variance=args.lambda_mc  # FIXED: Now uses the argument
     )
     dual_branch = UncertaintyAwareDualBranch(diffusion, generator, unc_config).to(device)
     fusion_module = create_fusion_module(method=args.fusion_method).to(device)

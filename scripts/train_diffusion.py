@@ -28,7 +28,7 @@ def main():
     parser.add_argument('--data_dir', type=str, default='./data')
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--num_workers', type=int, default=0)
-    parser.add_argument('--model_type', type=str, default='small', choices=['standard', 'small'])
+    parser.add_argument('--model_type', type=str, default='standard', choices=['standard', 'small'])
     parser.add_argument('--latent_channels', type=int, default=4)
     parser.add_argument('--base_channels', type=int, default=64)
     parser.add_argument('--num_timesteps', type=int, default=1000)
